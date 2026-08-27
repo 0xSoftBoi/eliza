@@ -2,7 +2,7 @@
 
 elizaOS plugin that connects an Eliza agent to external [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and exposes their tools and resources as agent capabilities.
 
-The plugin starts `McpService`, which connects to one or more MCP servers (stdio, SSE, or streamable-HTTP), discovers their tools and resources, and surfaces them through a single `MCP` action and an `MCP` provider. It is consumed by an elizaOS agent: add it to the character `plugins` array and configure servers under `settings.mcp.servers`.
+The plugin starts `McpService`, which connects to one or more MCP servers (stdio, SSE, or streamable-HTTP), discovers their tools and resources, and surfaces them through a single `MCP` action and an `MCP` provider. It is consumed by an elizaOS agent: add it to the character `plugins` array and configure servers under `settings.mcp.servers` or declare remote servers through the host environment.
 
 Node-only. `index.browser.ts` is a browser-unavailable entry because the MCP SDK's stdio/SSE transports require Node APIs (`eliza.platforms` is `["node"]`).
 
@@ -40,7 +40,17 @@ Add the plugin and declare servers in your character file:
 }
 ```
 
-Config lives entirely in `settings.mcp`, not in environment variables. The host `PATH` is forwarded to stdio child processes automatically. Malformed settings and rejected server configs fail service initialization instead of silently disabling or partially starting MCP. Every server config is validated by `@elizaos/core/security/mcp-server-config` (`validateMcpServerConfig`) before connect/spawn. Remote transports route every request through core's DNS-pinned SSRF guard, including redirects.
+Remote servers may instead be declared through the host environment. This is especially useful when authentication is required and credentials must not be serialized into character settings or MCP status data:
+
+```bash
+export MCP_SERVER_REMOTE_URL="https://example.com/mcp"
+export MCP_SERVER_REMOTE_TYPE="streamable-http" # optional; this is the default
+export MCP_SERVER_REMOTE_AUTHORIZATION="Bearer $REMOTE_MCP_TOKEN" # optional
+```
+
+`MCP_SERVER_<NAME>_AUTHORIZATION` is only paired with an env-declared `MCP_SERVER_<NAME>_URL`. The Authorization value is resolved when the HTTP/SSE transport is built and is not copied into `McpServerConfig`, connection status, or provider output. Blank values and values containing HTTP control characters fail closed. Rebuilding the transport re-reads the environment value, so credential rotation does not require storing a stale token in plugin state.
+
+Configured servers live under `settings.mcp`; env-declared remote servers are merged on top and win on a name collision. The host `PATH` is forwarded to stdio child processes automatically. Malformed settings and rejected server configs fail service initialization instead of silently disabling or partially starting MCP. Every server config is validated by `@elizaos/core/security/mcp-server-config` (`validateMcpServerConfig`) before connect/spawn. Remote transports route every request through core's DNS-pinned SSRF guard, including redirects.
 
 ## Configuration
 
@@ -48,6 +58,9 @@ Config lives entirely in `settings.mcp`, not in environment variables. The host 
 |---|---|---|---|
 | `mcp.servers` | `Record<string, McpServerConfig>` | — | Map of server name → transport config |
 | `mcp.maxRetries` | `number` | `2` | Max reconnect attempts per server |
+| `MCP_SERVER_<NAME>_URL` | environment string | — | Declare a remote MCP server without persisting its URL in character settings |
+| `MCP_SERVER_<NAME>_TYPE` | environment string | `streamable-http` | `streamable-http`, `http`, or `sse` |
+| `MCP_SERVER_<NAME>_AUTHORIZATION` | environment string | — | Optional full HTTP Authorization value for the matching env-declared remote server |
 
 Transport config (see `src/types.ts`):
 
@@ -92,7 +105,7 @@ bun run clean         # rm -rf dist .turbo
 
 ## Security
 
-MCP servers can execute arbitrary code, so only connect to servers you trust. Spawn/connect of every configured server is gated on `validateMcpServerConfig` from `@elizaos/core/security/mcp-server-config`; remote requests additionally use core's DNS-pinned SSRF transport.
+MCP servers can execute arbitrary code, so only connect to servers you trust. Spawn/connect of every configured server is gated on `validateMcpServerConfig` from `@elizaos/core/security/mcp-server-config`; remote requests additionally use core's DNS-pinned SSRF transport. For authenticated env-declared remote servers, keep credentials in `MCP_SERVER_<NAME>_AUTHORIZATION`; the plugin keeps that value out of serialized MCP config/status surfaces.
 
 ## License
 

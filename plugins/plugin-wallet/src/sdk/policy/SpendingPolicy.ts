@@ -160,10 +160,32 @@ export class SpendingPolicy {
 
   // ─── Draft queue management ─────────────────────────────────────────────────
 
-  /** Approve a queued draft by its draftId. Returns false if not found. */
+  /**
+   * Approve a queued draft by its draftId.
+   * Re-checks and records rolling-cap spend at approval time so delayed drafts
+   * cannot execute against stale capacity. Returns false when the draft is
+   * missing, rejected, or no longer fits within the rolling cap.
+   */
   approveDraft(draftId: string): boolean {
     const draft = this.drafts.get(draftId);
-    if (!draft) return false;
+    if (!draft || draft.rejected) return false;
+
+    // Approval is idempotent. In particular, do not account the same payment
+    // twice if a caller retries an approval request after a transport failure.
+    if (draft.approved) return true;
+
+    if (this.config.rollingCap) {
+      const { maxAmount, windowMs } = this.config.rollingCap;
+      const now = Date.now();
+      const windowStart = now - windowMs;
+      this.spendWindow = this.spendWindow.filter((e) => e.ts >= windowStart);
+
+      const spent = this.spendWindow.reduce((sum, e) => sum + e.amount, 0);
+      if (spent + draft.payment.amount > maxAmount) return false;
+
+      this.spendWindow.push({ amount: draft.payment.amount, ts: now });
+    }
+
     draft.approved = true;
     return true;
   }

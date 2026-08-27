@@ -77,6 +77,12 @@ export class McpService extends Service {
 
   private connections: Map<string, McpConnection> = new Map();
   private connectionStates: Map<string, ConnectionState> = new Map();
+  /**
+   * Env variable names containing Authorization header values for env-declared
+   * remote MCP servers. Store only the variable name here: the credential itself
+   * must never enter serialized McpServerConfig / status/provider surfaces.
+   */
+  private envHttpAuthorizationVariables: Map<string, string> = new Map();
   private mcpProvider: McpProvider = {
     values: { mcp: {}, mcpText: "" },
     data: { mcp: {} },
@@ -176,20 +182,60 @@ export class McpService extends Service {
   /**
    * Servers declared via the host environment as `MCP_SERVER_<NAME>_URL`, with
    * an optional `MCP_SERVER_<NAME>_TYPE` of `sse` or `http` (anything else
-   * falls back to `streamable-http`). Env-declared servers still pass the same
-   * security validation as configured ones.
+   * falls back to `streamable-http`). `MCP_SERVER_<NAME>_AUTHORIZATION` may
+   * provide an Authorization header for that remote transport. Its value stays
+   * out of the returned config so credentials cannot leak through status or
+   * provider serialization. Env-declared servers still pass the same security
+   * validation as configured ones.
    */
   private readEnvMcpServers(): Record<string, McpServerConfig> {
     const servers: Record<string, McpServerConfig> = {};
+    this.envHttpAuthorizationVariables.clear();
     for (const [key, value] of Object.entries(process.env)) {
       const match = key.match(/^MCP_SERVER_(.+)_URL$/);
       if (!match || !value?.trim()) continue;
       const name = match[1].toLowerCase();
       const typeRaw = process.env[`MCP_SERVER_${match[1]}_TYPE`]?.trim().toLowerCase();
       const type = typeRaw === "http" || typeRaw === "sse" ? typeRaw : "streamable-http";
+      const authorizationVariable = `MCP_SERVER_${match[1]}_AUTHORIZATION`;
+      if (Object.prototype.hasOwnProperty.call(process.env, authorizationVariable)) {
+        this.envHttpAuthorizationVariables.set(name, authorizationVariable);
+      }
       servers[name] = { type, url: value.trim() };
     }
     return servers;
+  }
+
+  /**
+   * Resolve an env-only Authorization value at transport-build time. The secret
+   * is deliberately absent from McpServerConfig and therefore from serialized
+   * connection/status state. Re-resolving here also makes operator credential
+   * rotation effective on a reconnect/restart without persisting stale tokens.
+   */
+  private getHttpRequestInit(name: string): RequestInit | undefined {
+    const authorizationVariable = this.envHttpAuthorizationVariables.get(name);
+    if (!authorizationVariable) return undefined;
+
+    const authorization = process.env[authorizationVariable];
+    if (authorization === undefined || authorization.trim().length === 0) {
+      throw new ElizaError(`MCP remote server "${name}" has an empty Authorization setting`, {
+        code: "MCP_SERVER_AUTHORIZATION_INVALID",
+        context: { server: name, env: authorizationVariable },
+        severity: "fatal",
+      });
+    }
+    if (/[\u0000-\u001F\u007F]/.test(authorization)) {
+      throw new ElizaError(
+        `MCP remote server "${name}" has an invalid Authorization setting`,
+        {
+          code: "MCP_SERVER_AUTHORIZATION_INVALID",
+          context: { server: name, env: authorizationVariable },
+          severity: "fatal",
+        }
+      );
+    }
+
+    return { headers: { Authorization: authorization } };
   }
 
   private async validateServerConfigs(
@@ -527,10 +573,15 @@ export class McpService extends Service {
     }
 
     const url = new URL(config.url);
+    const requestInit = this.getHttpRequestInit(name);
+    const transportOptions = {
+      fetch: guardedMcpFetch,
+      ...(requestInit ? { requestInit } : {}),
+    };
     if (config.type === "streamable-http") {
-      return new StreamableHTTPClientTransport(url, { fetch: guardedMcpFetch });
+      return new StreamableHTTPClientTransport(url, transportOptions);
     }
-    return new SSEClientTransport(url, { fetch: guardedMcpFetch });
+    return new SSEClientTransport(url, transportOptions);
   }
 
   private appendErrorMessage(connection: McpConnection, error: string): void {

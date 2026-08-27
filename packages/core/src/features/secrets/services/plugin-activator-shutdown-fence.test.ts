@@ -183,6 +183,13 @@ describe("PluginActivatorService shutdown fencing", () => {
 		expect(harness.service.isActivated("plugin-a")).toBe(true);
 		expect(onSecretChangedA).toHaveBeenCalledTimes(1);
 
+		// Register listeners only after the legitimate activation notification so
+		// any invocation below is unambiguously post-stop behavior.
+		const keyedListener = vi.fn(async () => undefined);
+		const globalListener = vi.fn(async () => undefined);
+		harness.service.onSecretChangedKey("TOKEN", keyedListener);
+		harness.service.onAnySecretChanged(globalListener);
+
 		await harness.service.registerPlugin(makePlugin("plugin-b"));
 
 		// A poll and a change handler both suspend on the same lookup gate.
@@ -195,8 +202,11 @@ describe("PluginActivatorService shutdown fencing", () => {
 		await stopping;
 		await vi.advanceTimersByTimeAsync(0);
 
-		// Only the legitimate pre-shutdown notification from activation remains.
+		// Only the legitimate pre-shutdown plugin notification remains, and no
+		// registered listener is invoked while the service drains.
 		expect(onSecretChangedA).toHaveBeenCalledTimes(1);
+		expect(keyedListener).not.toHaveBeenCalled();
+		expect(globalListener).not.toHaveBeenCalled();
 	});
 
 	it("still notifies activated plugins while the service is running", async () => {

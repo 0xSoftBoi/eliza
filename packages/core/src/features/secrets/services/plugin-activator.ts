@@ -87,6 +87,7 @@ export class PluginActivatorService extends Service {
 	private activePoll: Promise<void> | null = null;
 	private activationPromises: Map<string, Promise<boolean>> = new Map();
 	private unsubscribeSecretChanges: (() => void) | null = null;
+	private stopping = false;
 
 	/** Registered plugins with their callbacks */
 	private registeredPlugins: Map<string, RegisteredPlugin> = new Map();
@@ -225,6 +226,10 @@ export class PluginActivatorService extends Service {
 	 */
 	async stop(): Promise<void> {
 		logger.info("[PluginActivator] Stopping");
+		// Publish the shutdown intent before unsubscribing or awaiting any in-flight
+		// work. Suspended poll/change handlers use this to stop starting new secret
+		// lookups and to suppress callbacks while the service drains.
+		this.stopping = true;
 
 		if (this.pollingInterval) {
 			clearInterval(this.pollingInterval);
@@ -537,8 +542,8 @@ export class PluginActivatorService extends Service {
 		value: string | null,
 		context: SecretContext,
 	): Promise<void> {
-		// Only process global secret changes for plugin activation
-		if (context.level !== "global") {
+		// Once stop() publishes shutdown intent, no new secret work may start.
+		if (this.stopping || context.level !== "global") {
 			return;
 		}
 
@@ -552,13 +557,22 @@ export class PluginActivatorService extends Service {
 			);
 
 			for (const pluginId of affectedPlugins) {
+				if (this.stopping) {
+					return;
+				}
+
 				const pending = this.pendingPlugins.get(pluginId);
 				if (!pending) {
 					continue;
 				}
 
-				// Check if all required secrets are now available
+				// Check if all required secrets are now available. Re-check stopping
+				// after the await so a suspended lookup cannot advance to another
+				// plugin or activation after shutdown has started.
 				const missing = await this.getMissingSecrets(pending.requiredSecrets);
+				if (this.stopping) {
+					return;
+				}
 				if (this.pendingPlugins.get(pluginId) !== pending) {
 					continue;
 				}
@@ -571,7 +585,11 @@ export class PluginActivatorService extends Service {
 			}
 		}
 
-		// Notify all activated plugins that depend on this secret
+		// A change handler may have been suspended while stop() unsubscribed.
+		// Never dispatch plugin/listener notifications into a draining service.
+		if (this.stopping) {
+			return;
+		}
 		await this.notifySecretChanged(key, value);
 	}
 
@@ -704,7 +722,7 @@ export class PluginActivatorService extends Service {
 
 	/** Start one observed poll without overlapping a still-running cycle. */
 	private pollPendingPlugins(): void {
-		if (this.activePoll) {
+		if (this.stopping || this.activePoll) {
 			return;
 		}
 
@@ -731,13 +749,17 @@ export class PluginActivatorService extends Service {
 	 * Check all pending plugins
 	 */
 	private async checkPendingPlugins(): Promise<void> {
-		if (this.pendingPlugins.size === 0) {
+		if (this.stopping || this.pendingPlugins.size === 0) {
 			return;
 		}
 
 		const now = Date.now();
 
 		for (const [pluginId, pending] of this.pendingPlugins) {
+			if (this.stopping) {
+				return;
+			}
+
 			// Check timeout
 			if (this.activatorConfig.maxWaitMs > 0) {
 				const elapsed = now - pending.registeredAt;
@@ -750,8 +772,13 @@ export class PluginActivatorService extends Service {
 				}
 			}
 
-			// Check if secrets are now available
+			// Check if secrets are now available. Returning after the await is
+			// deliberate: it prevents the loop from starting the next lookup once
+			// shutdown was requested while this one was suspended.
 			const missing = await this.getMissingSecrets(pending.requiredSecrets);
+			if (this.stopping) {
+				return;
+			}
 			if (this.pendingPlugins.get(pluginId) !== pending) {
 				continue;
 			}

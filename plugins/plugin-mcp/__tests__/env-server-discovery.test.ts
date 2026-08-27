@@ -1,8 +1,9 @@
 /**
  * Tests env-declared MCP server discovery: `MCP_SERVER_<NAME>_URL` /
  * `MCP_SERVER_<NAME>_TYPE` variables merge on top of configured
- * `settings.mcp.servers`. Deterministic unit harness — a real McpService
- * instance with a stubbed runtime and a scoped process.env.
+ * `settings.mcp.servers`, while optional Authorization credentials remain
+ * outside the serializable server config. Deterministic unit harness — a real
+ * McpService instance with a stubbed runtime and a scoped process.env.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpService } from "../src/service";
@@ -11,11 +12,13 @@ import type { McpServerConfig, McpSettings } from "../src/types";
 type SettingsInternals = {
   runtime: { getSetting: (key: string) => unknown; character: { settings?: unknown } };
   getMcpSettings: () => McpSettings | undefined;
+  getHttpRequestInit: (name: string) => RequestInit | undefined;
 };
 
 const ENV_KEYS = [
   "MCP_SERVER_ROUTER_URL",
   "MCP_SERVER_ROUTER_TYPE",
+  "MCP_SERVER_ROUTER_AUTHORIZATION",
   "MCP_SERVER_Docs_URL",
   "MCP_SERVER_LEGACY_URL",
   "MCP_SERVER_LEGACY_TYPE",
@@ -85,6 +88,67 @@ describe("env-declared MCP servers", () => {
     const servers = service.getMcpSettings()?.servers as Record<string, McpServerConfig>;
     expect(servers.legacy.type).toBe("sse");
     expect(servers.router.type).toBe("streamable-http");
+  });
+
+  it("keeps an env Authorization credential out of serializable server config", () => {
+    const secret = "Bearer suwappu-test-secret";
+    process.env.MCP_SERVER_ROUTER_URL = "https://mcp.example.com/router";
+    process.env.MCP_SERVER_ROUTER_AUTHORIZATION = secret;
+    const service = serviceWith({});
+
+    const settings = service.getMcpSettings();
+    expect(settings?.servers.router).toEqual({
+      type: "streamable-http",
+      url: "https://mcp.example.com/router",
+    });
+    expect(JSON.stringify(settings)).not.toContain(secret);
+
+    const requestInit = service.getHttpRequestInit("router");
+    expect(new Headers(requestInit?.headers).get("authorization")).toBe(secret);
+  });
+
+  it("re-resolves Authorization at transport-build time so rotated credentials are used", () => {
+    process.env.MCP_SERVER_ROUTER_URL = "https://mcp.example.com/router";
+    process.env.MCP_SERVER_ROUTER_AUTHORIZATION = "Bearer first";
+    const service = serviceWith({});
+    service.getMcpSettings();
+
+    process.env.MCP_SERVER_ROUTER_AUTHORIZATION = "Bearer second";
+    const requestInit = service.getHttpRequestInit("router");
+    expect(new Headers(requestInit?.headers).get("authorization")).toBe("Bearer second");
+  });
+
+  it("fails closed on blank or control-character Authorization values without echoing them", () => {
+    process.env.MCP_SERVER_ROUTER_URL = "https://mcp.example.com/router";
+    process.env.MCP_SERVER_ROUTER_AUTHORIZATION = "   ";
+    const service = serviceWith({});
+    service.getMcpSettings();
+    expect(() => service.getHttpRequestInit("router")).toThrowError(/empty Authorization setting/);
+
+    const injected = "Bearer good\r\nX-Injected: secret";
+    process.env.MCP_SERVER_ROUTER_AUTHORIZATION = injected;
+    try {
+      service.getHttpRequestInit("router");
+      throw new Error("expected invalid authorization to be rejected");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).toMatch(/invalid Authorization setting/);
+      expect(message).not.toContain(injected);
+      expect(message).not.toContain("X-Injected");
+    }
+  });
+
+  it("clears authorization metadata when the env-declared server is removed", () => {
+    process.env.MCP_SERVER_ROUTER_URL = "https://mcp.example.com/router";
+    process.env.MCP_SERVER_ROUTER_AUTHORIZATION = "Bearer secret";
+    const service = serviceWith({});
+    service.getMcpSettings();
+    expect(service.getHttpRequestInit("router")).toBeDefined();
+
+    delete process.env.MCP_SERVER_ROUTER_URL;
+    delete process.env.MCP_SERVER_ROUTER_AUTHORIZATION;
+    service.getMcpSettings();
+    expect(service.getHttpRequestInit("router")).toBeUndefined();
   });
 
   it("skips blank URL values", () => {

@@ -75,17 +75,31 @@ describe("textStatesExplicitRecurrence", () => {
       "not on Mondays",
       "remind me tomorrow, not on weekdays",
       "one-off standup, never weekends or holidays",
+      // A short verb phrase between the negation and cadence must not make the
+      // recurrence marker escape its one-shot span (#26089).
+      "won't be daily",
+      "won’t be daily",
+      "don't make it weekly",
+      "don’t make it weekly",
+      "isn't going to be weekly",
+      "isn’t going to be weekly",
+      "doesn't run daily",
+      "doesn’t run daily",
     ]) {
       expect(textStatesExplicitRecurrence(text)).toBe(false);
     }
   });
 
-  it("keeps positive cadence when negation words are absent", () => {
+  it("keeps positive cadence when negation words are absent or used in a question", () => {
     for (const text of [
       "weekly sync",
       "daily standup on Mondays",
       "water the plants on weekends",
+      "will be daily",
+      "runs daily",
+      "is going to be weekly",
       "isn't this a daily job?",
+      "isn’t this a daily job?",
     ]) {
       expect(textStatesExplicitRecurrence(text)).toBe(true);
     }

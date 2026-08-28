@@ -165,6 +165,29 @@ export class UptoBillingPolicy {
     options: UptoSettlementOptions = {},
   ): UptoBillingSnapshot {
     const auth = this.requireAuthorization(authorizationId);
+    const settlementList = this.settlements.get(authorizationId);
+    if (!settlementList) {
+      throw new Error(
+        `[UptoBillingPolicy] Missing settlements for authorization ${authorizationId}`,
+      );
+    }
+
+    // Settlement delivery is commonly at-least-once (webhook retries, RPC
+    // retries, process recovery). Treat a repeated on-chain transaction as an
+    // idempotent replay instead of booking the same wallet movement twice.
+    if (options.txHash) {
+      const existing = settlementList.find(
+        (settlement) => settlement.txHash === options.txHash,
+      );
+      if (existing) {
+        if (existing.amount !== amount) {
+          throw new Error(
+            `Settlement txHash ${options.txHash} was already recorded with amount ${existing.amount}, received conflicting amount ${amount}`,
+          );
+        }
+        return this.getSnapshot(authorizationId);
+      }
+    }
 
     if (auth.status === "settled" || auth.status === "released") {
       throw new Error(`Authorization is already finalized: ${authorizationId}`);
@@ -193,12 +216,6 @@ export class UptoBillingPolicy {
     auth.remainingAmount -= amount;
     auth.status = auth.remainingAmount === 0n ? "settled" : "partially_settled";
 
-    const settlementList = this.settlements.get(authorizationId);
-    if (!settlementList) {
-      throw new Error(
-        `[UptoBillingPolicy] Missing settlements for authorization ${authorizationId}`,
-      );
-    }
     settlementList.push(settlement);
 
     const ledger = this.ledger.get(authorizationId);

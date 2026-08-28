@@ -1,9 +1,9 @@
 /**
  * Pins X DM unread derivation in toInboxMessage/buildInbox: DMs the fetcher
- * already marked read (dm.readAt -> lastSeenAt) or replied (dm.repliedAt) must
- * not inflate x_dm unread counts, while never-seen DMs stay unread and chat
- * channels keep their unread-for-triage fallback (#22055). Deterministic —
- * pure aggregation over literal InboundMessage fixtures.
+ * already marked read (dm.readAt -> lastSeenAt) or replied (dm.repliedAt ->
+ * repliedAt) must not inflate x_dm unread counts, while never-seen DMs stay
+ * unread and chat channels keep their unread-for-triage fallback (#22055).
+ * Deterministic — pure aggregation over literal InboundMessage fixtures.
  */
 import { describe, expect, it } from "vitest";
 
@@ -80,20 +80,24 @@ describe("x_dm unread derivation", () => {
     expect(inbox.messages[0]?.unread).toBe(true);
   });
 
-  it("maintains strict total ordering in thread groups when timestamp is NaN", () => {
-    const inbox = build([
-      xDm({
-        id: "dm-invalid",
-        threadId: "conv-mixed",
-        timestamp: Number.NaN,
-      }),
-      xDm({
-        id: "dm-valid",
-        threadId: "conv-mixed",
-        timestamp: NOW,
-      }),
-    ]);
-    expect(inbox.threadGroups).toHaveLength(1);
-    expect(inbox.threadGroups?.[0]?.latestMessage.id).toBe("x_dm:dm-valid");
+  it("fails loud on an invalid inbound timestamp before thread ordering", () => {
+    // Connector producers validate raw timestamps before aggregation. Keep this
+    // boundary aligned with the owning fuzz contract: malformed timestamps are
+    // pipeline errors and must throw rather than being rewritten to epoch 0 just
+    // to make the downstream thread comparator sortable.
+    expect(() =>
+      build([
+        xDm({
+          id: "dm-invalid",
+          threadId: "conv-mixed",
+          timestamp: Number.NaN,
+        }),
+        xDm({
+          id: "dm-valid",
+          threadId: "conv-mixed",
+          timestamp: NOW,
+        }),
+      ]),
+    ).toThrow(RangeError);
   });
 });

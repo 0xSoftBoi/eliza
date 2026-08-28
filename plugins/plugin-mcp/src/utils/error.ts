@@ -17,6 +17,12 @@ import {
 import { errorAnalysisPrompt } from "../templates/errorAnalysisPrompt";
 import type { McpProvider } from "../types";
 
+function safeUserMessage(message: Memory): string {
+  const content = message?.content;
+  if (!content || typeof content !== "object") return "";
+  return typeof content.text === "string" ? content.text : "";
+}
+
 export async function handleMcpError(
   state: State,
   mcpProvider: McpProvider,
@@ -34,11 +40,11 @@ export async function handleMcpError(
 
   if (callback) {
     const enhancedState: State = {
-      ...state,
+      ...(state ?? ({} as State)),
       values: {
-        ...state.values,
+        ...(state?.values ?? {}),
         mcpProvider,
-        userMessage: message.content.text ?? "",
+        userMessage: safeUserMessage(message),
         error: errorMessage,
       },
     };

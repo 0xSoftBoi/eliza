@@ -1,12 +1,30 @@
 import type { IAgentRuntime } from "@elizaos/core";
 import { describe, expect, it, vi } from "vitest";
-import { reflectOnAutoReply } from "./reflection.ts";
+import {
+  reflectOnAutoReply,
+  reflectOnSendConfirmation,
+} from "./reflection.ts";
 
-describe("reflectOnAutoReply", () => {
-  it("preserves complete unparseable reflection text with surrogate safety", async () => {
-    const rawUnparseable = `${"a".repeat(99)}😀${"b".repeat(20)}`;
+const RAW_UNPARSEABLE = `${"a".repeat(99)}😀${"b".repeat(20)}`;
+const DIAGNOSTIC_PREFIX = "Could not parse reflection: ";
+
+function expectBoundedWellFormedDiagnostic(reasoning: string): void {
+  expect(reasoning.startsWith(DIAGNOSTIC_PREFIX)).toBe(true);
+  expect(reasoning.includes("😀")).toBe(false);
+  expect(reasoning.length).toBeLessThanOrEqual(
+    DIAGNOSTIC_PREFIX.length + 100,
+  );
+  expect(
+    /[\uD800-\uDFFF]/.test(
+      reasoning.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ""),
+    ),
+  ).toBe(false);
+}
+
+describe("inbox reflection diagnostics", () => {
+  it("truncates unparseable auto-reply reflection text with surrogate safety", async () => {
     const runtime = {
-      useModel: vi.fn().mockResolvedValue(rawUnparseable),
+      useModel: vi.fn().mockResolvedValue(RAW_UNPARSEABLE),
     } as unknown as IAgentRuntime;
 
     const result = await reflectOnAutoReply(runtime, {
@@ -17,17 +35,22 @@ describe("reflectOnAutoReply", () => {
     });
 
     expect(result.approved).toBe(false);
-    expect(result.reasoning.startsWith("Could not parse reflection: ")).toBe(
-      true,
-    );
-    expect(result.reasoning).toBe(
-      `Could not parse reflection: ${rawUnparseable}`,
-    );
-    expect(result.reasoning.includes("😀")).toBe(true);
-    expect(
-      /[\uD800-\uDFFF]/.test(
-        result.reasoning.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ""),
-      ),
-    ).toBe(false);
+    expectBoundedWellFormedDiagnostic(result.reasoning);
+  });
+
+  it("truncates unparseable send-confirmation reflection text with surrogate safety", async () => {
+    const runtime = {
+      useModel: vi.fn().mockResolvedValue(RAW_UNPARSEABLE),
+    } as unknown as IAgentRuntime;
+
+    const result = await reflectOnSendConfirmation(runtime, {
+      userMessage: "send it",
+      draftText: "Hi Alice",
+      channelName: "email",
+      recipientName: "Alice",
+    });
+
+    expect(result.confirmed).toBe(false);
+    expectBoundedWellFormedDiagnostic(result.reasoning);
   });
 });

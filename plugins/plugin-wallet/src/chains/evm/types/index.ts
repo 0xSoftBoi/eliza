@@ -59,25 +59,28 @@ export const PrivateKeySchema = z
   .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid private key format")
   .transform((key) => key as `0x${string}`);
 
-export const AmountSchema = z.string().refine(
-  (val) => {
-    const num = parseFloat(val);
-    return !Number.isNaN(num) && num > 0;
-  },
-  { message: "Amount must be a positive number" }
-);
+// viem's parseUnits and the EVM execution paths consume canonical decimal
+// strings, not JavaScript parseFloat prefixes. Keep validation aligned with
+// what execution will actually parse so values such as "1foo", "1e3", or
+// "1,000" cannot pass validation with a different numeric meaning.
+const DECIMAL_AMOUNT_PATTERN = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+function isPositiveDecimalAmount(value: string): boolean {
+  if (!DECIMAL_AMOUNT_PATTERN.test(value)) return false;
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0;
+}
+
+export const AmountSchema = z.string().refine(isPositiveDecimalAmount, {
+  message: "Amount must be a positive decimal number",
+});
 
 export const OptionalAmountSchema = z
   .string()
   .optional()
-  .refine(
-    (val) => {
-      if (val === undefined) return true;
-      const num = parseFloat(val);
-      return !Number.isNaN(num) && num > 0;
-    },
-    { message: "If provided, amount must be a positive number" }
-  );
+  .refine((val) => val === undefined || isPositiveDecimalAmount(val), {
+    message: "If provided, amount must be a positive decimal number",
+  });
 
 export interface Transaction {
   readonly hash: Hash;

@@ -212,13 +212,16 @@ const optionalString = z
     return out.length > 0 ? out : undefined;
   });
 
+const DECIMAL_AMOUNT_PATTERN = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
+
 const optionalPositiveAmount = optionalString.refine(
   (value) => {
     if (value === undefined) return true;
+    if (!DECIMAL_AMOUNT_PATTERN.test(value)) return false;
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0;
   },
-  { message: "amount must be a positive number" },
+  { message: "amount must be a positive decimal number" },
 );
 
 const optionalStringArray = z.preprocess((value) => {

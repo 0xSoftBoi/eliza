@@ -17,6 +17,7 @@
  * from calling code.
  */
 import type { Memory } from "@elizaos/core";
+import { PublicKey } from "@solana/web3.js";
 
 /** GHSA-7qxr-x6cg-r9cc: embedded addresses in token metadata must not become transfer recipients. */
 /** GHSA-gh63-5vpj-39qp: block financial writes on injection-flagged channel messages. */
@@ -67,6 +68,15 @@ const SOLANA_ADDRESS_EXACT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const INFERRED_RECIPIENT_PHRASE =
   /\b(?:prior\s+wallet\s+evidence|operational\s+recipient|canonical\s+(?:testnet\s+)?(?:operational|settlement)\s+recipient|based\s+on\s+(?:the\s+)?prior|from\s+prior\s+(?:wallet|session|context))\b/i;
+
+function isValidSolanaRecipient(recipient: string): boolean {
+  if (!SOLANA_ADDRESS_EXACT.test(recipient)) return false;
+  try {
+    return new PublicKey(recipient).toBase58() === recipient;
+  } catch {
+    return false;
+  }
+}
 
 export function sanitizeWalletDisplayLabel(label: string): string {
   return label
@@ -179,8 +189,8 @@ export function assertSolanaTransferRecipientAuthorized(
   options: Record<string, unknown> | undefined,
   recipient: string,
 ): void {
-  if (!SOLANA_ADDRESS_EXACT.test(recipient)) {
-    throw new Error("recipient must be a valid Solana base58 address.");
+  if (!isValidSolanaRecipient(recipient)) {
+    throw new Error("recipient must be a valid Solana public key.");
   }
 
   const userText = readMemoryText(message);

@@ -20,8 +20,10 @@ import type {
 } from "viem";
 import * as viemChains from "viem/chains";
 import { z } from "zod";
+import { MAX_SLIPPAGE_PERCENT } from "../constants";
 
 const SUPPORTED_CHAIN_NAMES = Object.keys(viemChains) as ReadonlyArray<keyof typeof viemChains>;
+const MAX_SLIPPAGE_BPS = Math.round(MAX_SLIPPAGE_PERCENT * 10_000);
 
 export type SupportedChain = keyof typeof viemChains;
 
@@ -59,25 +61,19 @@ export const PrivateKeySchema = z
   .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid private key format")
   .transform((key) => key as `0x${string}`);
 
-export const AmountSchema = z.string().refine(
-  (val) => {
-    const num = parseFloat(val);
-    return !Number.isNaN(num) && num > 0;
-  },
-  { message: "Amount must be a positive number" }
-);
+export const AmountSchema = z.string().refine((val) => {
+  const num = Number.parseFloat(val);
+  return !Number.isNaN(num) && num > 0;
+}, "Amount must be a positive number");
 
 export const OptionalAmountSchema = z
   .string()
   .optional()
-  .refine(
-    (val) => {
-      if (val === undefined) return true;
-      const num = parseFloat(val);
-      return !Number.isNaN(num) && num > 0;
-    },
-    { message: "If provided, amount must be a positive number" }
-  );
+  .refine((val) => {
+    if (val === undefined) return true;
+    const num = Number.parseFloat(val);
+    return !Number.isNaN(num) && num > 0;
+  }, "If provided, amount must be a positive number");
 
 export interface Transaction {
   readonly hash: Hash;
@@ -156,7 +152,7 @@ export const SwapParamsSchema = z.object({
   fromToken: z.union([AddressSchema, z.string().min(1)]),
   toToken: z.union([AddressSchema, z.string().min(1)]),
   amount: AmountSchema,
-  slippageBps: z.coerce.number().int().min(0).max(10_000).optional(),
+  slippageBps: z.coerce.number().int().min(0).max(MAX_SLIPPAGE_BPS).optional(),
 });
 
 export function parseSwapParams(input: unknown): SwapParams {
@@ -208,7 +204,7 @@ export const BridgeParamsSchema = z.object({
   toToken: z.union([AddressSchema, z.string().min(1)]),
   amount: AmountSchema,
   toAddress: AddressSchema.optional(),
-  slippageBps: z.coerce.number().int().min(0).max(10_000).optional(),
+  slippageBps: z.coerce.number().int().min(0).max(MAX_SLIPPAGE_BPS).optional(),
 });
 
 export function parseBridgeParams(input: unknown): BridgeParams {

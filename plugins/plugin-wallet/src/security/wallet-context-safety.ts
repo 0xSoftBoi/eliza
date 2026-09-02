@@ -63,6 +63,7 @@ function messageHasPromptInjectionFlag(message: Memory): boolean {
 }
 export const EVM_ADDRESS_PATTERN = /0x[a-fA-F0-9]{40}\b/g;
 export const SOLANA_ADDRESS_PATTERN = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
+const EVM_ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const SOLANA_ADDRESS_EXACT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const INFERRED_RECIPIENT_PHRASE =
@@ -207,6 +208,9 @@ export function assertEvmTransferRecipientAuthorized(
 ): void {
   if (!/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
     throw new Error("recipient must be a valid EVM address.");
+  }
+  if (recipient.toLowerCase() === EVM_ZERO_ADDRESS) {
+    throw new Error("recipient must not be the EVM zero address.");
   }
 
   const userText = readMemoryText(message);

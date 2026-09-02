@@ -89,6 +89,13 @@ function nextId(prefix: string): string {
   return `${prefix}-${Date.now()}-${++_idCounter}`;
 }
 
+function cloneDraft(draft: DraftEntry): DraftEntry {
+  return {
+    ...draft,
+    payment: { ...draft.payment },
+  };
+}
+
 // ─── SpendingPolicy ───────────────────────────────────────────────────────────
 
 export class SpendingPolicy {
@@ -155,37 +162,37 @@ export class SpendingPolicy {
 
   /** Return the full, immutable audit log (copy). */
   getAuditLog(): AuditEntry[] {
-    return [...this.auditLog];
+    return this.auditLog.map((entry) => ({ ...entry }));
   }
 
   // ─── Draft queue management ─────────────────────────────────────────────────
 
-  /** Approve a queued draft by its draftId. Returns false if not found. */
+  /** Approve a queued draft by its draftId. Returns false if not found or already rejected. */
   approveDraft(draftId: string): boolean {
     const draft = this.drafts.get(draftId);
-    if (!draft) return false;
+    if (!draft || draft.rejected) return false;
     draft.approved = true;
     return true;
   }
 
-  /** Reject a queued draft by its draftId. Returns false if not found. */
+  /** Reject a queued draft by its draftId. Returns false if not found or already approved. */
   rejectDraft(draftId: string): boolean {
     const draft = this.drafts.get(draftId);
-    if (!draft) return false;
+    if (!draft || draft.approved) return false;
     draft.rejected = true;
     return true;
   }
 
   /** Return all pending drafts awaiting approval or rejection. */
   getPendingDrafts(): DraftEntry[] {
-    return Array.from(this.drafts.values()).filter(
-      (d) => !d.approved && !d.rejected,
-    );
+    return Array.from(this.drafts.values())
+      .filter((d) => !d.approved && !d.rejected)
+      .map(cloneDraft);
   }
 
-  /** Return all drafts. */
+  /** Return all drafts as detached snapshots. */
   getAllDrafts(): DraftEntry[] {
-    return Array.from(this.drafts.values());
+    return Array.from(this.drafts.values(), cloneDraft);
   }
 
   // ─── Private Logic ──────────────────────────────────────────────────────────
@@ -232,7 +239,7 @@ export class SpendingPolicy {
       const draftId = nextId("draft");
       const draft: DraftEntry = {
         draftId,
-        payment,
+        payment: { ...payment },
         queuedAt: payment.timestamp ?? new Date().toISOString(),
         approved: false,
         rejected: false,

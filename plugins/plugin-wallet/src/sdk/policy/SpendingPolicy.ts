@@ -191,6 +191,18 @@ export class SpendingPolicy {
   // ─── Private Logic ──────────────────────────────────────────────────────────
 
   private async _check(payment: PaymentIntent): Promise<PolicyResult> {
+    // Invalid or non-positive amounts must never reach cap accounting. In
+    // particular, recording a negative approved amount would reduce `spent`
+    // and create artificial headroom under RollingSpendCap.
+    if (!Number.isFinite(payment.amount) || payment.amount <= 0) {
+      const result: PolicyResult = {
+        status: "rejected",
+        reason: "Payment amount must be a finite positive number.",
+      };
+      await this.log(payment, result);
+      return result;
+    }
+
     // 1. MerchantAllowlist check (only enforced when allowlist is non-empty)
     if (this.allowlist.size > 0) {
       const merchant = payment.merchant.toLowerCase();

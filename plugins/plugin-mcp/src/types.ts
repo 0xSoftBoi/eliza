@@ -69,6 +69,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function isStdioMcpServerConfig(value: unknown): value is StdioMcpServerConfig {
   return (
     isRecord(value) &&
@@ -80,7 +84,7 @@ function isStdioMcpServerConfig(value: unknown): value is StdioMcpServerConfig {
       (isRecord(value.env) &&
         Object.values(value.env).every((entry) => typeof entry === "string"))) &&
     (value.cwd === undefined || typeof value.cwd === "string") &&
-    (value.timeoutInMillis === undefined || typeof value.timeoutInMillis === "number")
+    (value.timeoutInMillis === undefined || isPositiveFiniteNumber(value.timeoutInMillis))
   );
 }
 
@@ -89,7 +93,7 @@ function isHttpMcpServerConfig(value: unknown): value is HttpMcpServerConfig {
     isRecord(value) &&
     (value.type === "http" || value.type === "streamable-http" || value.type === "sse") &&
     typeof value.url === "string" &&
-    (value.timeout === undefined || typeof value.timeout === "number")
+    (value.timeout === undefined || isPositiveFiniteNumber(value.timeout))
   );
 }
 
